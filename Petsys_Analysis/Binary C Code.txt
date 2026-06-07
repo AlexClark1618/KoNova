@@ -1,0 +1,32 @@
+struct Event {
+	long long time;
+	float e;
+	int  id;
+};
+
+An example of a C code snippet for reading such format is:
+
+# include <stdio.h>
+struct Event {
+	long long time;
+	float e;
+	int id;
+} _ _a t t r i b u t e _ _ ( ( _ _p a c k e d _ _ ) ) ;
+
+
+struct CoincidenceGroupHeader {
+	uint8_t nHits1;
+	uint8_t nHits2;
+} _ _a t t r i b u t e_ _ ( (_ _ p a c k e d _ _) ) ;
+
+Event ev;
+CoincidenceGroupHeader header;
+
+FILE ∗ dataFile = fopen ( ”data_folder/datacoinc.ldat” , ” rb ” ) ;
+while ( !feof(dataFile) ) {
+	fread(&header , sizeof( header ), 1, dataFile );
+	Event coinc1[ header.nHits1 ] ;
+	fread( coinc1, sizeof( Event ), header.nHits1, dataFile ) ;
+	Event coinc2[ header.nHits2 ] ;
+	fread( coinc2, sizeof( Event ), header.nHits2, dataFile ) ;
+}
