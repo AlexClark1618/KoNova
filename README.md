@@ -1,6 +1,6 @@
 # KoNova Muon Detection Analysis
 
-A Python analysis pipeline for processing and visualizing cosmic ray muon data collected with the KoNova scintillator bar detector using the PETsys DAQ system.
+A Python analysis pipeline for processing and visualizing cosmic ray muon data collected with a four layer Hodoscope detector (KoNova) using the PETsys DAQ system, fermilab triangular scintillator bars, kurary y-11 wavelength shifting fiber.
 
 ---
 
