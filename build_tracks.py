@@ -284,7 +284,7 @@ def compute_angle_distributions(tracks, delta_z=DELTA_Z):
     return angles[:, 0], angles[:, 1]   # zenith, azimuth
 
 
-def background_subtraction(data1, data2):
+def background_subtraction(data1, data2, graph):
     BAR_EDGES = np.arange(8.25, 1064.25+16.5, 16.5)     
     edges = np.arange(0,1072+16.5, 16.5)
     print(len(BAR_EDGES))
@@ -294,8 +294,7 @@ def background_subtraction(data1, data2):
     y_top = tracks_top[:, 1]
 
     signal_top_hist, x_edges, y_edges = np.histogram2d(x_top, y_top, bins = BAR_EDGES)
-    print(x_edges)
-    print(y_edges)
+
     tracks_bottom = np.array([t[1] for t in data1])
     x_bottom = tracks_bottom[:, 0]
     y_bottom = tracks_bottom[:, 1]
@@ -315,44 +314,115 @@ def background_subtraction(data1, data2):
     
     background_bottom_hist, _, _ = np.histogram2d(x_bottom, y_bottom, bins = BAR_EDGES)
 
-    #Subtraction
-    unshielded = np.ones_like(signal_top_hist, dtype=bool)
-    unshielded[400:600, 400:600] = False
 
+    #Subtraction
+    
+    lead_xy_min = 431.8
+    lead_xy_max = 635
+    
+    #Mask needs to be in bin dimensions
+    bin_size = 16.5
+
+    lead_xy_min_bin = int(431.8 / bin_size)  # → 26
+    lead_xy_max_bin = int(635 / bin_size)    # → 38
+
+    unshielded = np.ones_like(signal_top_hist, dtype=bool)
+    shielded = np.zeros_like(signal_top_hist, dtype=bool)
+
+    unshielded[lead_xy_min_bin:lead_xy_max_bin, lead_xy_min_bin:lead_xy_max_bin] = False
+    shielded[lead_xy_min_bin:lead_xy_max_bin, lead_xy_min_bin:lead_xy_max_bin] = True
+
+    #-----Top -----
     k = signal_top_hist[unshielded].sum() / background_top_hist[unshielded].sum()
-    print(f"k = {k:.6f}")
-    print(f"Net residual: {(signal_top_hist - k * background_top_hist).sum():.1f}")    
+    print(f"k top= {k:.6f}")
     top_residual = signal_top_hist - k* background_top_hist
     print("Top residual sum",np.sum(top_residual))
-
 
     var   = signal_top_hist + k**2 * background_top_hist                     # variance
     sigma = np.sqrt(var)                                   # sqrt element-wise
     Z_top = np.where(sigma > 0, top_residual / sigma, 0.0)
 
+    Z_top_shielded = Z_top[shielded]                         # extract shielded pixels
+
+    plt.hist(Z_top_shielded, bins = 'fd')
+    plt.xlabel("Z-Score")
+    plt.ylabel("Counts")
+    plt.title('Z-Score Distribution (Shielded Region Only)')
+    filename = f"{SAVE_RUN_NAME}_Z_Score_Distribution_(Top x-y Layer)_(Shielded Region Only).png"
+    filepath = os.path.join(SAVE_FOLDER, filename)
+    print(f'{filename} saved')
+    plt.savefig(filepath, dpi=300)
+
+    if graph:
+        plt.show()
+
+    plt.clf()    
+    Z_top_unshielded = Z_top[unshielded]                         # extract shielded pixels
+
+    plt.hist(Z_top_unshielded, bins = 'fd')
+    plt.xlabel("Z-Score")
+    plt.ylabel("Counts")
+    plt.title('Z-Score Distribution (Unshielded Region Only)')
+    filename = f"{SAVE_RUN_NAME}_Z_Score_Distribution_(Top x-y Layer)_(Unshielded Region Only).png"
+    filepath = os.path.join(SAVE_FOLDER, filename)
+    print(f'{filename} saved')
+    plt.savefig(filepath, dpi=300)
+
+    if graph:
+        plt.show()
+
+    plt.clf()    
+        
     fig, ax = plt.subplots()
     im = ax.pcolormesh(x_edges, y_edges, top_residual.T, cmap="RdBu_r")
-    plt.colorbar(im, ax=ax, label="Flux difference (counts)")
+    plt.colorbar(im, ax=ax, label="Flux difference (counts) (Signal- Background)")
     plt.xlim(0, 1072)
     plt.xlabel("x (mm)")
     plt.ylim(0, 1072)
-    plt.xlabel("y (mm)")
+    plt.ylabel("y (mm)")
+    plt.title("Flux Difference Map (Top x-y Layer)")
+    lead_xy_min = 431.8
+    lead_xy_max = 635
+    
+    plt.axhline(y= lead_xy_min, color='red', linestyle='--', label='Horizontal Line')
+    plt.axhline(y = lead_xy_max, color='red', linestyle='--', label='Horizontal Line')
+    plt.axvline(x = lead_xy_min, color='red', linestyle='--', label='Vertical Line')
+    plt.axvline(x = lead_xy_max, color='red', linestyle='--', label='Vertical Line')
+    filename = f"{SAVE_RUN_NAME}_Flux_Difference_Heatmap_(Top x-y Layer)_(S-B).png"
+    filepath = os.path.join(SAVE_FOLDER, filename)
+    print(f'{filename} saved')
+    plt.savefig(filepath, dpi=300)
 
-    detector_length = 1072
-    plt.axhline(y= detector_length-469.9, color='red', linestyle='--', label='Horizontal Line')
-    plt.axhline(y = detector_length-673.1, color='red', linestyle='--', label='Horizontal Line')
-    plt.axvline(x = detector_length-469.9, color='red', linestyle='--', label='Vertical Line')
-    plt.axvline(x = detector_length-673.1, color='red', linestyle='--', label='Vertical Line')
-    plt.show()
+    if graph:
+        plt.show()
 
+    plt.clf()    
     fig, ax = plt.subplots()
     im = ax.pcolormesh(x_edges, y_edges, Z_top.T, cmap="RdBu_r")
     plt.colorbar(im, ax=ax, label="Z Map")
-    plt.show()
+    plt.xlim(0, 1072)
+    plt.xlabel("x (mm)")
+    plt.ylim(0, 1072)
+    plt.ylabel("y (mm)")
+    plt.title("Z-Score Map (Top x-y Layer)")
+    plt.axhline(y= lead_xy_min, color='red', linestyle='--', label='Horizontal Line')
+    plt.axhline(y = lead_xy_max, color='red', linestyle='--', label='Horizontal Line')
+    plt.axvline(x = lead_xy_min, color='red', linestyle='--', label='Vertical Line')
+    plt.axvline(x = lead_xy_max, color='red', linestyle='--', label='Vertical Line')
+    filename = f"{SAVE_RUN_NAME}_Z_Score_Heatmap_(Top x-y Layer)_(S-B).png"
+    filepath = os.path.join(SAVE_FOLDER, filename)
+    print(f'{filename} saved')
+    plt.savefig(filepath, dpi=300)
+
+    if graph:
+        plt.show()
+
+    plt.clf()    
+
+    #-----Bottom Layer-----
 
     k = signal_bottom_hist.sum() / background_bottom_hist.sum()
-    print(f"k = {k:.6f}")
-    print(f"Net residual: {(signal_bottom_hist - k * background_bottom_hist).sum():.1f}")    
+    print(f"k bottom = {k:.6f}")
     bottom_residual = signal_bottom_hist - k* background_bottom_hist
     print("Bottom residual sum",np.sum(bottom_residual))
 
@@ -362,26 +432,51 @@ def background_subtraction(data1, data2):
 
     fig, ax = plt.subplots()
     im = ax.pcolormesh(x_edges, y_edges, bottom_residual.T, cmap="RdBu_r")
-    plt.colorbar(im, ax=ax, label="Flux difference (counts)")
-    plt.show()
+    plt.colorbar(im, ax=ax, label="Flux difference (counts) (Signal- Background)")
+    plt.xlim(0, 1072)
+    plt.xlabel("x (mm)")
+    plt.ylim(0, 1072)
+    plt.ylabel("y (mm)")
+    plt.title("Flux Difference Map (Bottom x-y Layer)")
+    filename = f"{SAVE_RUN_NAME}_Flux_Score_Heatmap_(Bottom x-y Layer)_(S-B).png"
+    filepath = os.path.join(SAVE_FOLDER, filename)
+    print(f'{filename} saved')
+    plt.savefig(filepath, dpi=300)
 
+    if graph:
+        plt.show()
+
+    plt.clf() 
+    
     fig, ax = plt.subplots()
     im = ax.pcolormesh(x_edges, y_edges, Z_bottom.T, cmap="RdBu_r")
-    plt.colorbar(im, ax=ax, label="Z Map")
-    plt.show()
-# ----------------------------- Plots -----------------------------
+    plt.colorbar(im, ax=ax, label="Z Score")
+    plt.xlim(0, 1072)
+    plt.xlabel("x (mm)")
+    plt.ylim(0, 1072)
+    plt.ylabel("y (mm)")
+    plt.title("Z-Score Map (Bottom x-y Layer)")
+    filename = f"{SAVE_RUN_NAME}_Z_Score_Heatmap_(Bottom x-y Layer)_(S-B).png"
+    filepath = os.path.join(SAVE_FOLDER, filename)
+    print(f'{filename} saved')
+    plt.savefig(filepath, dpi=300)
+
+    if graph:
+        plt.show()
+
+    plt.clf() # ----------------------------- Plots -----------------------------
 
 def layer_hit_heatmap(data, graph, full_area):
 
     if full_area:
-        BAR_EDGES = np.arange(0, 1072.5+16.5, 16.5)
+        BAR_EDGES = np.arange(8.25, 1064.25+16.5, 16.5)     
         h_line_min = 16.5
         h_line_max = 1056.0
         v_line_min = 16.5
         v_line_max = 1056.0
         name_add_on = "Full Area"
     else:
-        BAR_EDGES = np.arange(16.5, 1056+16.5, 16.5)   # bar 1 right edge to bar 63 right edge
+        BAR_EDGES = np.arange(8.25+16.5, 1064.25, 16.5)     
         h_line_min = 33
         h_line_max = 1039.5
         v_line_min = 33
@@ -406,7 +501,7 @@ def layer_hit_heatmap(data, graph, full_area):
     plt.colorbar(label="count")
     plt.title(f'Top Layer Hit Positions {name_add_on}')
 
-    filename = f"{RUN_NAME}_Top_xy_Heatmap_{name_add_on}"
+    filename = f"{SAVE_RUN_NAME}_Top_xy_Heatmap_{name_add_on}"
     print(f'{filename} saved')
     filepath = os.path.join(SAVE_FOLDER, filename)
     plt.savefig(filepath, dpi=300)
@@ -432,7 +527,7 @@ def layer_hit_heatmap(data, graph, full_area):
     plt.colorbar(label="count")
     plt.title(f'Bottom Layer Hit Positions {name_add_on}')
 
-    filename = f"{RUN_NAME}_Bottom_xy_Heatmap_{name_add_on}"
+    filename = f"{SAVE_RUN_NAME}_Bottom_xy_Heatmap_{name_add_on}"
     print(f'{filename} saved')
     filepath = os.path.join(SAVE_FOLDER, filename)
     plt.savefig(filepath, dpi=300)
@@ -443,9 +538,9 @@ def layer_hit_heatmap(data, graph, full_area):
     plt.clf() 
 
 def main():
-
     SUB_DATA_FOLDER_PATH = os.path.join(DATA_FOLDER_PATH, RUN_NAME)
-    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=5)
+
+    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=40)
     print(f"Found {len(coincidence_files)} files for run {RUN_NAME}.")
     events    = read_coincidence_file(coincidence_files)
     ch_to_bar = build_ch_to_bar(BAR_CH_MAP, OFFSETS)
@@ -455,9 +550,10 @@ def main():
     print(f"Coincidence rate: {len(events) / (len(coincidence_files) * RUN_SECONDS)} Hz")
 
     tracks_full_lead = build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=False)
-
+    
     SUB_DATA_FOLDER_PATH = os.path.join(DATA_FOLDER_PATH, BACKGROUND)
-    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=5)
+
+    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=40)
     print(f"Found {len(coincidence_files)} files for run {BACKGROUND}.")
     events    = read_coincidence_file(coincidence_files)
     ch_to_bar = build_ch_to_bar(BAR_CH_MAP, OFFSETS)
@@ -468,26 +564,25 @@ def main():
 
     tracks_full_background = build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=False)
 
-    background_subtraction(tracks_full_lead, tracks_full_background)
+    background_subtraction(tracks_full_lead, tracks_full_background, graph=False)
     #tracks_fiducial = build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=True)
     #tracks_fiducial = fiducial_filter(tracks_full)
 
-
-    print(f"Full Area Coincidence Rate: {len(tracks_full)/ (len(coincidence_files) * RUN_SECONDS)} Hz")
     #print(f"Fiducial Area Coincidence Rate: {len(tracks_fiducial)/ (len(coincidence_files) * RUN_SECONDS)} Hz")
 
     #layer_hit_heatmap(tracks_fiducial, graph=False, full_area=False)
-    layer_hit_heatmap(tracks_full, graph=False, full_area=True)
+    layer_hit_heatmap(tracks_full_lead, graph=False, full_area=True)
+    layer_hit_heatmap(tracks_full_background, graph=False, full_area=True)
 
 if __name__ == '__main__':
     FILE_PATH   = 'KNVA-20260514-01-00079_coinc.dat'
-    DATA_FOLDER_PATH = r"C:\\Users\\aclark2\\Desktop\\KoNova Code\\PETsys Data"
-    SAVE_FOLDER_PATH = r"C:\\Users\\aclark2\\Desktop\\KoNova Code\\PETsys Plots"
+    DATA_FOLDER_PATH = r"C:\\Users\\AlexClark\\Desktop\\KoNova-Code\\PETsys Data"
+    SAVE_FOLDER_PATH = r"C:\\Users\\AlexClark\\Desktop\\KoNova-Code\\PETsys Plots"
     RUN_NAME    = 'Lead'
     BACKGROUND = 'Loading Dock'
     SAVE_RUN_NAME = 'Practice' #RUN_NAME
-    #SUB_DATA_FOLDER_PATH = os.path.join(DATA_FOLDER_PATH, RUN_NAME)
-    SAVE_FOLDER = os.path.join(SAVE_FOLDER_PATH, RUN_NAME)
+    SUB_DATA_FOLDER_PATH = os.path.join(DATA_FOLDER_PATH, RUN_NAME)
+    SAVE_FOLDER = os.path.join(SAVE_FOLDER_PATH, SAVE_RUN_NAME)
     os.makedirs(SAVE_FOLDER, exist_ok=True) 
     print(f'Save directory created {SAVE_FOLDER}')
 

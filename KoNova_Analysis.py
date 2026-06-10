@@ -556,7 +556,7 @@ def layer_hit_heatmap(data, graph, full_area):
 
 def main():
 
-    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=1)
+    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=50)
     print(f"Found {len(coincidence_files)} files for run {RUN_NAME}.")
     events    = read_coincidence_file(coincidence_files)
     ch_to_bar = build_ch_to_bar(BAR_CH_MAP, OFFSETS)
@@ -610,10 +610,11 @@ def main():
 
 if __name__ == '__main__':
     FILE_PATH   = 'KNVA-20260514-01-00079_coinc.dat'
-    DATA_FOLDER_PATH = r"C:\\Users\\aclark2\\Desktop\\KoNova Code\\PETsys Data"
-    SAVE_FOLDER_PATH = r"C:\\Users\\aclark2\\Desktop\\KoNova Code\\PETsys Plots"
-    RUN_NAME    = 'Blue Sky'
-    SAVE_RUN_NAME = 'Practice' #RUN_NAME
+    
+    DATA_FOLDER_PATH = r"C:\\Users\\AlexClark\\Desktop\\KoNova-Code\\PETsys Data"
+    SAVE_FOLDER_PATH = r"C:\\Users\\AlexClark\\Desktop\\KoNova-Code\\PETsys Plots"
+    RUN_NAME    = 'Lead'
+    SAVE_RUN_NAME = 'Lead' #RUN_NAME
     SUB_DATA_FOLDER_PATH = os.path.join(DATA_FOLDER_PATH, RUN_NAME)
     SAVE_FOLDER = os.path.join(SAVE_FOLDER_PATH, RUN_NAME)
     os.makedirs(SAVE_FOLDER, exist_ok=True) 
