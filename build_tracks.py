@@ -318,15 +318,22 @@ def background_subtraction(data1, data2, graph):
     #Mask needs to be in bin dimensions
     bin_size = 16.5
 
-    lead_xy_min_bin = int(431.8 / bin_size)  # → 26
-    lead_xy_max_bin = int(635 / bin_size)    # → 38
+    edge_start = BAR_EDGES[0]   # = 8.25
 
+    lead_xy_min_bin = int((lead_xy_min - edge_start) / bin_size)  # (431.8 - 8.25)/16.5 = 25
+    lead_xy_max_bin = int((lead_xy_max - edge_start) / bin_size)
+    
+    print(f"Shielded x range: {BAR_EDGES[lead_xy_min_bin]:.2f} → {BAR_EDGES[lead_xy_max_bin]:.2f} mm")
+# Should print values close to 431.8 → 635.0
     unshielded = np.ones_like(signal_top_hist, dtype=bool)
     shielded = np.zeros_like(signal_top_hist, dtype=bool)
 
     unshielded[lead_xy_min_bin:lead_xy_max_bin, lead_xy_min_bin:lead_xy_max_bin] = False
     shielded[lead_xy_min_bin:lead_xy_max_bin, lead_xy_min_bin:lead_xy_max_bin] = True
 
+    print(f"Shielded bins: {lead_xy_max_bin - lead_xy_min_bin} * {lead_xy_max_bin - lead_xy_min_bin}")
+    print(f"Total shielded bins: {np.sum(shielded)}")
+    
     print(f"Counts in shielded region Signal: {signal_top_hist[shielded].sum()}")
     print(f"Counts in shielded region background: {background_top_hist[shielded].sum()}")
 
@@ -341,11 +348,16 @@ def background_subtraction(data1, data2, graph):
     Z_top = np.where(sigma > 0, top_residual / sigma, 0.0)
 
     Z_top_shielded = Z_top[shielded]                         # extract shielded pixels
-
+    print("Total entries:     ", len(Z_top_shielded))
+    print("Entries == 0.0:    ", np.sum(Z_top_shielded == 0.0))
+    print("Entries != 0.0:    ", np.sum(Z_top_shielded != 0.0))
+    counts, edges = np.histogram(Z_top_shielded, bins=50)
+    print("Sum of histogram counts:", counts.sum())
+    
     plt.hist(Z_top_shielded, bins = 'fd')
     plt.xlabel("Z-Score")
-    plt.ylabel("Counts")
-    plt.title(f'Z-Score Distribution (Shielded Region Only)\n Mean= {np.mean(Z_top_shielded)}')
+    plt.ylabel("Counts (Bins)")
+    plt.title(f'Z-Score Distribution (Shielded Region Only)\n Mean= {np.mean(Z_top_shielded):.2f}')
     filename = f"{SAVE_RUN_NAME}_Z_Score_Distribution_(Top x-y Layer)_(Shielded Region Only).png"
     filepath = os.path.join(SAVE_FOLDER, filename)
     print(f'{filename} saved')
@@ -359,8 +371,8 @@ def background_subtraction(data1, data2, graph):
 
     plt.hist(Z_top_unshielded, bins = 'fd')
     plt.xlabel("Z-Score")
-    plt.ylabel("Counts")
-    plt.title(f'Z-Score Distribution (Unshielded Region Only)\n Mean= {np.mean(Z_top_unshielded)}')
+    plt.ylabel("Counts (Bins)")
+    plt.title(f'Z-Score Distribution (Unshielded Region Only)\n Mean= {np.mean(Z_top_unshielded):.2f}')
     filename = f"{SAVE_RUN_NAME}_Z_Score_Distribution_(Top x-y Layer)_(Unshielded Region Only).png"
     filepath = os.path.join(SAVE_FOLDER, filename)
     print(f'{filename} saved')
@@ -548,20 +560,23 @@ def layer_hit_heatmap(data, graph, full_area, marker):
 def main():
     SUB_DATA_FOLDER_PATH = os.path.join(DATA_FOLDER_PATH, RUN_NAME)
 
-    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=40)
+    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=80)
     print(f"Found {len(coincidence_files)} files for run {RUN_NAME}.")
     events    = read_coincidence_file(coincidence_files)
     ch_to_bar = build_ch_to_bar(BAR_CH_MAP, OFFSETS)
     decoded   = decode_events(events, ch_to_bar)
 
     print(f"Total coincidence events: {len(events)}")
-    print(f"Coincidence rate: {len(events) / (len(coincidence_files) * RUN_SECONDS)} Hz")
+    print(f"Coincidence rate before cuts: {len(events) / (len(coincidence_files) * RUN_SECONDS)} Hz")
 
     tracks_full_lead = build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=False)
     
+    print(f"Total coincidence events: {len(tracks_full_lead)}")
+    print(f"Coincidence rate with cuts: {len(tracks_full_lead) / (len(coincidence_files) * RUN_SECONDS)} Hz")
+    
     SUB_DATA_FOLDER_PATH = os.path.join(DATA_FOLDER_PATH, BACKGROUND)
 
-    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=40)
+    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=80)
     print(f"Found {len(coincidence_files)} files for run {BACKGROUND}.")
     events    = read_coincidence_file(coincidence_files)
     ch_to_bar = build_ch_to_bar(BAR_CH_MAP, OFFSETS)
@@ -571,6 +586,9 @@ def main():
     print(f"Coincidence rate: {len(events) / (len(coincidence_files) * RUN_SECONDS)} Hz")
 
     tracks_full_background = build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=False)
+
+    print(f"Total coincidence events: {len(tracks_full_background)}")
+    print(f"Coincidence rate with cuts: {len(tracks_full_background) / (len(coincidence_files) * RUN_SECONDS)} Hz")
 
     background_subtraction(tracks_full_lead, tracks_full_background, graph=False)
     #tracks_fiducial = build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=True)

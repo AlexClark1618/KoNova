@@ -162,15 +162,20 @@ def layer_position(hits, sep=BAR_SEP):
         return None
     bars = np.array([h[1] for h in hits])
 
+    deadzone = 4.9 #mm (estimate)
     if len(set(bars)) > 1: 
         #If multiple bars hit, return random position between lowest and highest hit bars hit
-        low  = float(bars.min()* sep)   # Center of lowest hit bar
-        high = float(bars.max() * sep)  # Center of highest hit bar
+        low  = float((bars.min() * sep) + deadzone)   # Center of lowest hit bar
+        high = float((bars.max() * sep) - deadzone)  # Center of highest hit bar
         bar_pos = np.random.uniform(low, high)
         return bar_pos
     
     else:
-        return int(bars) * sep # Bar 1 center = 16.5, Between Bar 1 and 2 = 24.75, ... Bar 64 center = 1056.0
+        low  = float((bars * sep) - deadzone)   # Low of single bar hit with deadzone
+        high = float((bars * sep) + deadzone)  # High of single bar hit with deadzone
+        bar_pos = np.random.uniform(low, high)
+        return bar_pos
+        #return int(bars) * sep # Bar 1 center = 16.5, Between Bar 1 and 2 = 24.75, ... Bar 64 center = 1056.0
 
 
 def bars_adjacent(layer_hits):
@@ -486,14 +491,14 @@ def quadrant_rate_plot(zenith, azimuth, n_files, graph, full_area):
 def layer_hit_heatmap(data, graph, full_area):
 
     if full_area:
-        BAR_EDGES = np.arange(0, 1072.5+16.5, 16.5)
+        BAR_EDGES = np.arange(8.25, 1064.25+16.5, 16.5)     
         h_line_min = 16.5
         h_line_max = 1056.0
         v_line_min = 16.5
         v_line_max = 1056.0
         name_add_on = "Full Area"
     else:
-        BAR_EDGES = np.arange(16.5, 1056+16.5, 16.5)   # bar 1 right edge to bar 63 right edge
+        BAR_EDGES = np.arange(8.25+16.5, 1064.25, 16.5)     
         h_line_min = 33
         h_line_max = 1039.5
         v_line_min = 33
@@ -556,7 +561,7 @@ def layer_hit_heatmap(data, graph, full_area):
 
 def main():
 
-    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=50)
+    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=40)
     print(f"Found {len(coincidence_files)} files for run {RUN_NAME}.")
     events    = read_coincidence_file(coincidence_files)
     ch_to_bar = build_ch_to_bar(BAR_CH_MAP, OFFSETS)
@@ -614,9 +619,9 @@ if __name__ == '__main__':
     DATA_FOLDER_PATH = r"C:\\Users\\AlexClark\\Desktop\\KoNova-Code\\PETsys Data"
     SAVE_FOLDER_PATH = r"C:\\Users\\AlexClark\\Desktop\\KoNova-Code\\PETsys Plots"
     RUN_NAME    = 'Lead'
-    SAVE_RUN_NAME = 'Lead' #RUN_NAME
+    SAVE_RUN_NAME = 'Lead_w_deadzone' #RUN_NAME
     SUB_DATA_FOLDER_PATH = os.path.join(DATA_FOLDER_PATH, RUN_NAME)
-    SAVE_FOLDER = os.path.join(SAVE_FOLDER_PATH, RUN_NAME)
+    SAVE_FOLDER = os.path.join(SAVE_FOLDER_PATH, SAVE_RUN_NAME)
     os.makedirs(SAVE_FOLDER, exist_ok=True) 
     print(f'Save directory created {SAVE_FOLDER}')
 
