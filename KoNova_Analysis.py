@@ -1,19 +1,23 @@
 import numpy as np
 import time
 import os
+import sys
+import importlib
 import matplotlib.pyplot as plt
 
+from KoNova_Data_Filter import FilteredData
+
 # ----------------------------- Initial Variables -----------------------------
-BAR_CH_MAP  = 'bar_ch_map.csv'
-OFFSETS     = {1: 64, 2: 320, 3: 576, 4: 832} #Layer-ch num offset dict, e.g. layer 1 ch 0-63, layer 2 ch 320-383, etc.
+HERE        = os.path.dirname(os.path.abspath(__file__))
+MAP_FOLDER  = os.path.join(HERE, 'Bar_CH_Mappings')  # holds bar_ch_map_norm.csv, bar_ch_map_inverted.csv
 BAR_SEP     = 16.5                       # mm, bar centre-to-centre
-DELTA_Z     = 11.75 * 2.54 * 10          # mm, x-top to x-bottom (measured 4/29/2026)
+DELTA_Z     = 11.625 * 2.54 * 10          # mm, x-top to x-bottom (measured 4/29/2026)
 RUN_SECONDS = 600
 N_BARS      = 64
-delta_x = 0.01 *10 #Dan's measured shifts between layers and stretch in bars
-delta_y = 0.35 *10 
-delta_x_stretch = 1.003 
-delta_y_stretch = 0.9965 
+delta_x = 0#0.01 *10 #Dan's measured shifts between layers and stretch in bars
+delta_y = 0#0.35 *10 
+delta_x_stretch = 1#1.003 
+delta_y_stretch = 1#0.9965 
 
 
 FIDUCIAL_RADIUS = 1.0065e3 / 2          # mm # Drop edge bars
@@ -21,7 +25,7 @@ CENTER = ((N_BARS+1) / 2 * BAR_SEP,  # geometric centre of the bar array
           (N_BARS+1) / 2 * BAR_SEP)
 
 # ----------------------------- Folder and File Handling -----------------------------
-def folder_reader(folder_path, file_max = None):
+def folder_reader(folder_path, file_max = None, file_size_in_MB=None):
     """Returns a list of filenames in folder_path matching run_name and ending with '_coinc.dat'."""
     coincidence_files = []
     for filename in os.listdir(folder_path):
@@ -29,6 +33,11 @@ def folder_reader(folder_path, file_max = None):
             coincidence_files.append(os.path.join(folder_path, filename))
     if file_max:
         return coincidence_files[:file_max]
+    if file_size_in_MB:
+        for f in coincidence_files:
+            if os.path.getsize(f) < file_size_in_MB * 1000 * 1000 or file_size_in_MB :
+                print(f"Warning: File {f} is smaller than {file_size_in_MB} MB and will be skipped.")
+        return [f for f in coincidence_files if os.path.getsize(f) > file_size_in_MB * 1000 * 1000]
     else:
         return coincidence_files
 
@@ -53,17 +62,63 @@ def read_coincidence_file(coincidence_files):
 
     return events
 
-def build_ch_to_bar(map_path, offsets):
-    """Map scaled channel number -> (layer, bar)."""
-    ch_to_bar = {}
-    with open(map_path, 'r') as f:
+def load_detector_config(detector_name):
+    """Import <detector_name>_initialization.py and return it (e.g. 'KN1' -> KN1_initialization)."""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    config = importlib.import_module(f'{detector_name}_initialization')
+    print(f"Loaded configuration for detector {config.DETECTOR_NAME}")
+    for layer in sorted(config.OFFSETS):
+        print(f"  Layer {layer}: offset {config.OFFSETS[layer]}, map {config.LAYER_MAPS[layer]}")
+    return config
+
+def read_bar_map(map_name, map_folder=MAP_FOLDER):
+    """Read one bar/channel mapping CSV into {bar: base_ch}."""
+    bar_map = {}
+    with open(os.path.join(map_folder, map_name), 'r') as f:
         next(f)  # skip header
         for line in f:
+            if not line.strip():
+                continue
             bar, base_ch = map(int, line.strip().split(','))
-            for layer, off in offsets.items():
-                ch_to_bar[base_ch + off] = (layer, bar)
+            bar_map[bar] = base_ch
+    return bar_map
+
+def build_ch_to_bar(layer_maps, offsets, map_folder=MAP_FOLDER):
+    """Map scaled channel number -> (layer, bar), using each layer's own mapping file."""
+    ch_to_bar = {}
+    cache = {}  # map filename -> {bar: base_ch}, so a shared map is only read once
+    for layer, off in offsets.items():
+        map_name = layer_maps[layer]
+        if map_name not in cache:
+            cache[map_name] = read_bar_map(map_name, map_folder)
+        for bar, base_ch in cache[map_name].items():
+            ch_to_bar[base_ch + off] = (layer, bar)
     return ch_to_bar
 
+def write_to_stats_file(cuts, n_events, n_files, tracks_full, tracks_fiducial):
+    """Write the run's event counts, per-cut tallies and rates to a text file."""
+    total_seconds = n_files * RUN_SECONDS
+    s = cuts.stats
+    stats_file_path = os.path.join(SAVE_FOLDER, f"{RUN_NAME}_stats.txt")
+    with open(stats_file_path, 'w') as f:
+        f.write(f"Run Name: {RUN_NAME}\n")
+        f.write(f"Files processed: {n_files} ({total_seconds} s)\n")
+        f.write(f"Total PETsys coincidence events: {n_events}\n")
+        f.write(f"Raw PETsys Coincidence rate: {n_events / total_seconds} Hz\n")
+        f.write(f"Filtered out {s['layer_skipped']} blocks with insufficient layers hit out of a total of {len(cuts.decoded)} blocks.\n")
+        f.write(f"Pruned {s['pruned_hits']} stray bar hits from {s['pruned_blocks']} blocks.\n")
+        f.write(f"Filtered out {s['adjacency_too_wide']} blocks with a cluster wider than {cuts.max_bars_per_layer} bars.\n")
+        f.write(f"Filtered out {s['adjacency_all_single']} blocks with only isolated single-bar hits in a layer.\n")
+        f.write(f"Filtered out {s['adjacency_tied_multi']} blocks with two or more multi-bar clusters in a layer.\n")
+        f.write(f"Blocks surviving adjacency cut: {s['adjacency_kept']} of {s['layer_kept']}\n")
+        f.write(f"Trimmed hits from {s['time_blocks_trimmed']} blocks with a time spread over {cuts.max_time_ns} ns "
+                f"({s['time_hits_dropped']} hits dropped).\n")
+        f.write(f"Tracks reconstructed (full area): {len(tracks_full)}\n")
+        f.write(f"Tracks reconstructed (fiducial): {len(tracks_fiducial)}\n")
+        f.write(f"Full Area Coincidence Rate: {len(tracks_full) / total_seconds} Hz\n")
+        f.write(f"Fiducial Area Coincidence Rate: {len(tracks_fiducial) / total_seconds} Hz\n")
+    print(f"Statistics written to {stats_file_path}")
 
 # ------------------------ Decode to (layer, bar) ------------------
 def decode_events(events, ch_to_bar):
@@ -80,18 +135,26 @@ def decode_events(events, ch_to_bar):
 
 
 # --------------------------- Diagnostics --------------------------
-def per_layer_stats(decoded):
+def per_layer_stats(kept_blocks):
     """Return (freq, qdc) dicts keyed by layer."""
     freq_dist = {l: {b: 0 for b in range(1, N_BARS + 1)} for l in range(1, 5)}
     qdc_dist  = {l: [] for l in range(1, 5)}
-    #hits_by_layer = {l: [h for h in block if h[0] == l] for l in range(1, 5)}
+    time_dist  = {l: [] for l in range(1, 5)}
 
-    for block in decoded:
+    ts_greater_than_20ns = 0
+    for block in kept_blocks:
+        ts_list = [hit[3] for hit in block]
+        if (max(ts_list) - min(ts_list))/1000 > 20:
+            ts_greater_than_20ns += 1
+
         for layer, bar, qdc_value, _ in block:
+
             freq_dist[layer][bar] += 1
             qdc_dist[layer].append(qdc_value)
+            time_dist[layer].append((max(ts_list) - min(ts_list))/1000)
 
-    return freq_dist, qdc_dist
+    print(f"Blocks with time spread greater than 20ns: {ts_greater_than_20ns} of {len(kept_blocks)}")
+    return freq_dist, qdc_dist, time_dist
 
 from collections import Counter
 
@@ -162,7 +225,7 @@ def layer_position(hits, sep=BAR_SEP):
         return None
     bars = np.array([h[1] for h in hits])
 
-    deadzone = 4.9 #mm (estimate)
+    deadzone = 0 #mm (estimate)
     if len(set(bars)) > 1: 
         #If multiple bars hit, return random position between lowest and highest hit bars hit
         low  = float((bars.min() * sep) + deadzone)   # Center of lowest hit bar
@@ -171,8 +234,8 @@ def layer_position(hits, sep=BAR_SEP):
         return bar_pos
     
     else:
-        low  = float((bars * sep) - deadzone)   # Low of single bar hit with deadzone
-        high = float((bars * sep) + deadzone)  # High of single bar hit with deadzone
+        low  = float((bars * sep) - BAR_SEP/2)   # Low of single bar hit with deadzone
+        high = float((bars * sep) + BAR_SEP/2)  # High of single bar hit with deadzone
         bar_pos = np.random.uniform(low, high)
         return bar_pos
         #return int(bars) * sep # Bar 1 center = 16.5, Between Bar 1 and 2 = 24.75, ... Bar 64 center = 1056.0
@@ -194,13 +257,6 @@ def bars_adjacent(layer_hits):
     #print(bars[0], bars[-1], len(bars))
     
     return bars[-1] - bars[0] == len(bars) - 1 and len(set(bars)) == len(bars)
-
-'''
-def hit_count_per_layer(decoded):
-    for block in decoded:
-        print(decoded)
-        hits_by_layer = {l: [h for h in block if h[0] == l] for l in range(1, 5)}
-'''
 
 def build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=True):
     """
@@ -285,13 +341,21 @@ def fiducial_filter(tracks):
     return [t for t in tracks if in_fiducial(t[0]) and in_fiducial(t[1])]
 
 def compute_angle_distributions(tracks, delta_z=DELTA_Z):
+    if not tracks:
+        raise ValueError(
+            "No tracks survived build_tracks - check the skip counts above. "
+            "If everything was skipped for empty layers, either the run was taken in "
+            "2-fold coincidence (no event has all 4 layers, so no track can be built), "
+            "or the DETECTOR config does not match the data (wrong channel offsets or "
+            "bar/channel map)."
+        )
     angles = np.array([track_angles(t, b, delta_z) for t, b in tracks])
     return angles[:, 0], angles[:, 1]   # zenith, azimuth
 
 # ----------------------------- Plots -----------------------------
 
 def bar_frequency_and_qdc_distribution_plots(data, graph):
-    freq, qdc = per_layer_stats(data)
+    freq, qdc, ts = per_layer_stats(data)
 
     for layer in range(1, 5):
         plt.bar(freq[layer].keys(), freq[layer].values())
@@ -315,6 +379,7 @@ def bar_frequency_and_qdc_distribution_plots(data, graph):
         mean_qdc = np.mean(qdc[layer])
         std_qdc = np.std(qdc[layer])
         plt.title(f'Layer {layer} QDC Distribution\nMean: {mean_qdc:.2f} | Std: {std_qdc:.2f}')
+        plt.xlim(-1, 10)
         plt.xlabel('QDC Value')
         plt.ylabel('Frequency')
 
@@ -325,8 +390,27 @@ def bar_frequency_and_qdc_distribution_plots(data, graph):
 
         if graph:
             plt.show()
-        
-        plt.clf() 
+
+        plt.clf()
+
+        plt.hist(ts[layer], bins='fd')
+        mean_ts = np.mean(ts[layer])
+        std_ts = np.std(ts[layer])
+        plt.title(f'Layer {layer} Time Distribution\nMean: {mean_ts:.2f} | Std: {std_ts:.2f}')
+        plt.xlabel('Time (ns)')
+        plt.xlim(0, 100)
+        plt.ylabel('Frequency')
+        plt.yscale('log')
+
+        filename = f"{RUN_NAME}_Layer_{layer}_Time_Distribution"
+        print(f'{filename} saved')
+        filepath = os.path.join(SAVE_FOLDER, filename)
+        plt.savefig(filepath, dpi=300)
+
+        if graph:
+            plt.show()
+
+        plt.clf()
 
 def zenith_and_azimuth_distribution_plot(zenith, azimuth, graph, full_area):
 
@@ -337,7 +421,7 @@ def zenith_and_azimuth_distribution_plot(zenith, azimuth, graph, full_area):
         name_add_on = "Fiducial"
 
     #Zenith Plotting
-    plt.hist(zenith, bins='fd')
+    plt.hist(zenith, bins=90)
     mean_zenith = np.mean(zenith)
     std_zenith = np.std(zenith)
     plt.title(f'Zenith Angle Distribution {name_add_on}\nMean: {mean_zenith:.2f}° | Std: {std_zenith:.2f}°')
@@ -354,7 +438,7 @@ def zenith_and_azimuth_distribution_plot(zenith, azimuth, graph, full_area):
     plt.clf() 
 
     #Asimuth Plotting
-    plt.hist(azimuth, bins=36)
+    plt.hist(azimuth, bins=90)
     plt.title(f'Azimuth Angle Distribution {name_add_on}')
     plt.xlabel('Azimuth (°)')
     plt.ylabel('Counts')
@@ -508,10 +592,10 @@ def layer_hit_heatmap(data, graph, full_area):
     tracks_top = np.array([t[0] for t in data])
     x_top = tracks_top[:, 0]
     y_top = tracks_top[:, 1]
-    print(f"x range: {x_top.min()} to {x_top.max()}")  # expecting 0, 1023 or similar
-    print(f"Unique x values: {len(np.unique(x_top))}")
-    print(f"y range: {y_top.min()} to {y_top.max()}")  # expecting 0, 1023 or similar
-    print(f"Unique y values: {len(np.unique(y_top))}")
+    #print(f"x range: {x_top.min()} to {x_top.max()}")  # expecting 0, 1023 or similar
+    #print(f"Unique x values: {len(np.unique(x_top))}")
+    #print(f"y range: {y_top.min()} to {y_top.max()}")  # expecting 0, 1023 or similar
+    #print(f"Unique y values: {len(np.unique(y_top))}")
     
     plt.hist2d(x_top, y_top, bins=BAR_EDGES, cmap="viridis")
     
@@ -559,53 +643,48 @@ def layer_hit_heatmap(data, graph, full_area):
     
     plt.clf() 
 
-def main():
+def main(config):
 
-    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max=40)
+    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max = 6, file_size_in_MB=None)
     print(f"Found {len(coincidence_files)} files for run {RUN_NAME}.")
     events    = read_coincidence_file(coincidence_files)
-    ch_to_bar = build_ch_to_bar(BAR_CH_MAP, OFFSETS)
+    ch_to_bar = build_ch_to_bar(config.LAYER_MAPS, config.OFFSETS)
     decoded   = decode_events(events, ch_to_bar)
 
-    print(f"Total coincidence events: {len(events)}")
-    print(f"Coincidence rate: {len(events) / (len(coincidence_files) * RUN_SECONDS)} Hz")
+    print(f"Total PETsys coincidence events: {len(events)}")
+    print(f"Raw PETsys Coincidence rate: {len(events) / (len(coincidence_files) * RUN_SECONDS)} Hz")
 
-    print("W/o Cuts")
-    bar_hits_per_layer(decoded, False, graph = False)
-    print("w/ Cuts")
-    bar_hits_per_layer(decoded, True, graph = False)
+    cuts = FilteredData(decoded,
+                        max_bars_per_layer=5,
+                        max_time_ns=100,
+                        plot_time_cut=True,
+                        save_folder=SAVE_FOLDER,
+                        run_name=RUN_NAME,
+                        show_plots=False)
+    print(cuts.summary())
 
-    tracks_full = build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=False)
+    bar_hits_per_layer(cuts.blocks, True, graph = False)
+    
+    bar_frequency_and_qdc_distribution_plots(cuts.blocks, graph= False)
 
-    #tracks_fiducial = build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=True)
+    tracks_full = build_tracks(cuts.blocks, accept=bars_adjacent, cut_edge_bars=False)
     tracks_fiducial = fiducial_filter(tracks_full)
 
     zenith_full, azimuth_full = compute_angle_distributions(tracks_full)
-    azimuth_full_array = np.array(azimuth_full)
-    azimuth_hist = np.histogram(azimuth_full_array, bins = 36)
-    print(f'Azimuth_hist: {azimuth_hist[0]}')
-    print(len(azimuth_hist[0]))
-    print((len(azimuth_hist[0])/2)+1)
-    print(f"0-180 mean count: {np.mean(azimuth_hist[0][:int((len(azimuth_hist[0])/2)+1)])}")
-    print(f"180-360 mean count: {np.mean(azimuth_hist[0][int((len(azimuth_hist[0])/2)+1):])}")
-
-    print(f"Both Zeros: {both_zero}")
-    print(f"dx == 0: {dx_zero}")
-    print(f"dy == 0: {dy_zero}")
-    print(f"Total calls to track_angles: {call_count}")
     zenith_fiducial, azimuth_fiducial = compute_angle_distributions(tracks_fiducial)
+
+    azimuth_histogram = np.histogram(azimuth_fiducial, bins=45)
+    print(f"Azimuthal Mean Variation: {np.std(azimuth_histogram[0])/np.mean(azimuth_histogram[0])*100:.2f}%")
+    print(f"Maximum Azimuthal Variation: {(np.max(azimuth_histogram[0])-np.min(azimuth_histogram[0]))/np.min(azimuth_histogram[0])*100:.2f}%")
 
     print(f"Full Area Coincidence Rate: {len(tracks_full)/ (len(coincidence_files) * RUN_SECONDS)} Hz")
     print(f"Fiducial Area Coincidence Rate: {len(tracks_fiducial)/ (len(coincidence_files) * RUN_SECONDS)} Hz")
 
-    bar_frequency_and_qdc_distribution_plots(decoded, graph= False)
+    #anglular_heatmap(zenith_fiducial, azimuth_fiducial, graph=False, full_area=False)
+    #anglular_heatmap(zenith_full, azimuth_full, graph=False, full_area=True)
 
-    anglular_heatmap(zenith_fiducial, azimuth_fiducial, graph=False, full_area=False)
-    anglular_heatmap(zenith_full, azimuth_full, graph=False, full_area=True)
-
-
-    quadrant_rate_plot(zenith_fiducial, azimuth_fiducial, n_files=len(coincidence_files), graph=False, full_area=False)
-    quadrant_rate_plot(zenith_full, azimuth_full, n_files=len(coincidence_files), graph=False, full_area=True)
+    #quadrant_rate_plot(zenith_fiducial, azimuth_fiducial, n_files=len(coincidence_files), graph=False, full_area=False)
+    #quadrant_rate_plot(zenith_full, azimuth_full, n_files=len(coincidence_files), graph=False, full_area=True)
 
     zenith_and_azimuth_distribution_plot(zenith_fiducial, azimuth_fiducial, graph= False, full_area=False)
     zenith_and_azimuth_distribution_plot(zenith_full, azimuth_full, graph= False, full_area=True)
@@ -613,16 +692,21 @@ def main():
     layer_hit_heatmap(tracks_fiducial, graph=False, full_area=False)
     layer_hit_heatmap(tracks_full, graph=False, full_area=True)
 
+    write_to_stats_file(cuts, len(events), len(coincidence_files), tracks_full, tracks_fiducial)
+
 if __name__ == '__main__':
-    FILE_PATH   = 'KNVA-20260514-01-00079_coinc.dat'
-    
-    DATA_FOLDER_PATH = r"C:\\Users\\AlexClark\\Desktop\\KoNova-Code\\PETsys Data"
-    SAVE_FOLDER_PATH = r"C:\\Users\\AlexClark\\Desktop\\KoNova-Code\\PETsys Plots"
-    RUN_NAME    = 'Lead'
-    SAVE_RUN_NAME = 'Lead_w_deadzone' #RUN_NAME
+    #FILE_PATH   = 'KNVA-20260514-01-00079_coinc.dat'
+
+    DETECTOR    = 'KN2'   # 'KN1' or 'KN2' -> loads <DETECTOR>_initialization.py
+    config      = load_detector_config(DETECTOR)
+
+    DATA_FOLDER_PATH = r"C:\\Users\\aclark2\\Desktop\\KoNova\\PETsys Data"
+    SAVE_FOLDER_PATH = r"C:\\Users\\aclark2\\Desktop\\KoNova\\PETsys Plots"
+    RUN_NAME    = 'KN2_Lab_Test_10_10_8'
+    SAVE_RUN_NAME = 'KN2_Lab_Test_10_10_8' #RUN_NAME
     SUB_DATA_FOLDER_PATH = os.path.join(DATA_FOLDER_PATH, RUN_NAME)
     SAVE_FOLDER = os.path.join(SAVE_FOLDER_PATH, SAVE_RUN_NAME)
     os.makedirs(SAVE_FOLDER, exist_ok=True) 
     print(f'Save directory created {SAVE_FOLDER}')
 
-    main()
+    main(config)
