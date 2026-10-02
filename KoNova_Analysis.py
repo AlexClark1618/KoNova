@@ -20,7 +20,7 @@ delta_x_stretch = 1#1.003
 delta_y_stretch = 1#0.9965 
 
 
-FIDUCIAL_RADIUS = 1.0065e3 / 2          # mm # Drop edge bars
+FIDUCIAL_RADIUS = 1.0395e3 / 2          # mm # Drop edge bars
 CENTER = ((N_BARS+1) / 2 * BAR_SEP,  # geometric centre of the bar array
           (N_BARS+1) / 2 * BAR_SEP)
 
@@ -228,14 +228,14 @@ def layer_position(hits, sep=BAR_SEP):
     deadzone = 0 #mm (estimate)
     if len(set(bars)) > 1: 
         #If multiple bars hit, return random position between lowest and highest hit bars hit
-        low  = float((bars.min() * sep) + deadzone)   # Center of lowest hit bar
-        high = float((bars.max() * sep) - deadzone)  # Center of highest hit bar
+        low  = float((bars.min() * sep) - BAR_SEP + deadzone)   # Center of lowest hit bar
+        high = float((bars.max() * sep) + BAR_SEP - deadzone)  # Center of highest hit bar
         bar_pos = np.random.uniform(low, high)
         return bar_pos
     
     else:
-        low  = float((bars * sep) - BAR_SEP/2)   # Low of single bar hit with deadzone
-        high = float((bars * sep) + BAR_SEP/2)  # High of single bar hit with deadzone
+        low  = float((bars * sep) - BAR_SEP)   # Low of single bar hit with deadzone
+        high = float((bars * sep) + BAR_SEP)  # High of single bar hit with deadzone
         bar_pos = np.random.uniform(low, high)
         return bar_pos
         #return int(bars) * sep # Bar 1 center = 16.5, Between Bar 1 and 2 = 24.75, ... Bar 64 center = 1056.0
@@ -266,6 +266,7 @@ def build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=True):
              Event is dropped if any required layer fails or is empty.
     """
     tracks = []
+    dxdy=[]
     skipped_none = 0
     skipped_adjacency = 0
     skipped_edge = 0
@@ -298,11 +299,28 @@ def build_tracks(decoded, accept=bars_adjacent, cut_edge_bars=True):
         # layer 1=x_bottom, 2=y_bottom, 3=x_top, 4=y_top
         top    = (pos[3], pos[4])
         bottom = (pos[1], pos[2])
+        
+        #dx = bottom[0] - top[0]
+        #dy = bottom[1] - top[1]
+        
+        #dxdy.append([dx,dy])
+        
         tracks.append([top, bottom])
     print(f"Events skipped (empty layers): {skipped_none}")
     print(f"Events skipped (non-adjacent bars): {skipped_adjacency}")
     print(f"Events skipped (edge bars): {skipped_edge}")
     print(f"Events kept: {len(tracks)}")
+    
+    #dxdy= np.array(dxdy)
+    
+    #dx_hist, dy_hist = np.histogram(dxdy[:,0], bins=100), np.histogram(dxdy[:,1], bins=100)
+    
+    #plt.hist(dxdy[:,0], bins=100)
+    #plt.show()
+    #plt.hist(dxdy[:,1], bins=100)
+    #plt.show()
+    
+    
     return tracks
 
 
@@ -329,8 +347,8 @@ def track_angles(p_top, p_bottom, delta_z=DELTA_Z):
     v  = np.array([(dx * delta_y_stretch) + delta_y , (dy * delta_x_stretch) + delta_x, delta_z])
     #print(f"v[x]: {v[0]}")
     zenith  = np.degrees(np.arccos(np.clip(v[2] / np.linalg.norm(v), -1.0, 1.0)))
-
     azimuth = np.degrees(np.arctan2(v[1], v[0])) % 360
+    
     return zenith, azimuth
 
 def in_fiducial(point, center=CENTER, radius=FIDUCIAL_RADIUS):
@@ -645,7 +663,7 @@ def layer_hit_heatmap(data, graph, full_area):
 
 def main(config):
 
-    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max = 6, file_size_in_MB=None)
+    coincidence_files = folder_reader(SUB_DATA_FOLDER_PATH, file_max = 10, file_size_in_MB=None)
     print(f"Found {len(coincidence_files)} files for run {RUN_NAME}.")
     events    = read_coincidence_file(coincidence_files)
     ch_to_bar = build_ch_to_bar(config.LAYER_MAPS, config.OFFSETS)
@@ -656,7 +674,7 @@ def main(config):
 
     cuts = FilteredData(decoded,
                         max_bars_per_layer=5,
-                        max_time_ns=100,
+                        max_time_ns=20,
                         plot_time_cut=True,
                         save_folder=SAVE_FOLDER,
                         run_name=RUN_NAME,
@@ -672,7 +690,13 @@ def main(config):
 
     zenith_full, azimuth_full = compute_angle_distributions(tracks_full)
     zenith_fiducial, azimuth_fiducial = compute_angle_distributions(tracks_fiducial)
-
+    
+    zenith_cut = 5
+    vertical_muons_cut = zenith_fiducial[zenith_fiducial <= zenith_cut]
+    print(f'Zenith Cut: {(len(vertical_muons_cut))}')
+    vertical_muon_flux = len(vertical_muons_cut) / ((len(coincidence_files) * RUN_SECONDS) * (np.pi * (FIDUCIAL_RADIUS/1000)**2) * (2*np.pi * (1 - np.cos(np.radians(zenith_cut)))))
+    print(f'Vertical Muon Flux: {vertical_muon_flux:.6e} muons/m^2/s/sr')
+    
     azimuth_histogram = np.histogram(azimuth_fiducial, bins=45)
     print(f"Azimuthal Mean Variation: {np.std(azimuth_histogram[0])/np.mean(azimuth_histogram[0])*100:.2f}%")
     print(f"Maximum Azimuthal Variation: {(np.max(azimuth_histogram[0])-np.min(azimuth_histogram[0]))/np.min(azimuth_histogram[0])*100:.2f}%")
@@ -700,10 +724,10 @@ if __name__ == '__main__':
     DETECTOR    = 'KN2'   # 'KN1' or 'KN2' -> loads <DETECTOR>_initialization.py
     config      = load_detector_config(DETECTOR)
 
-    DATA_FOLDER_PATH = r"C:\\Users\\aclark2\\Desktop\\KoNova\\PETsys Data"
-    SAVE_FOLDER_PATH = r"C:\\Users\\aclark2\\Desktop\\KoNova\\PETsys Plots"
-    RUN_NAME    = 'KN2_Lab_Test_10_10_8'
-    SAVE_RUN_NAME = 'KN2_Lab_Test_10_10_8' #RUN_NAME
+    DATA_FOLDER_PATH = r"C:\\Users\\AlexClark\\Documents\\KoNova\\PETsys_Data"
+    SAVE_FOLDER_PATH = r"C:\\Users\\AlexClark\\Documents\\KoNova\\PETsys_Plots"
+    RUN_NAME    = 'KN2_Blue_Sky'
+    SAVE_RUN_NAME = 'KN2_Blue_Sky_090526' #RUN_NAME
     SUB_DATA_FOLDER_PATH = os.path.join(DATA_FOLDER_PATH, RUN_NAME)
     SAVE_FOLDER = os.path.join(SAVE_FOLDER_PATH, SAVE_RUN_NAME)
     os.makedirs(SAVE_FOLDER, exist_ok=True) 

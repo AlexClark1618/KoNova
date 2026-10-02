@@ -1,6 +1,5 @@
 /.vscode
-/__pycache
-/PETsys Plots
-change_log.txt
-/PETsys Data
-
+/__pycache__
+/PETsys_Plots
+/PETsys_Data
+/Petsys_Analysis
